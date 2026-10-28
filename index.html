@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My GIS Web Map</title>
+
+  <!-- Leaflet CSS and JS are loaded from a CDN; internet access is required. -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <style>
+    html, body { height: 100%; margin: 0; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: #202124; }
+    #app { height: 100%; display: flex; flex-direction: column; }
+    header { padding: 12px 16px; border-bottom: 1px solid #ddd; background: #fff; }
+    header h1 { margin: 0 0 4px; font-size: 1.2rem; }
+    header p { margin: 0; font-size: .9rem; color: #555; }
+    #map { flex: 1; min-height: 260px; }
+    .leaflet-popup-content { max-height: 260px; overflow: auto; }
+    .popup-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+    .popup-table th, .popup-table td { text-align: left; vertical-align: top; padding: 4px 6px; border-bottom: 1px solid #eee; overflow-wrap: anywhere; }
+    .popup-table th { font-weight: 600; width: 42%; }
+    .status { font-size: .85rem; padding: 7px 16px; background: #f6f7f8; border-top: 1px solid #ddd; }
+    .status.error { color: #9b1c1c; }
+    .leaflet-control-layers { max-width: 240px; }
+  </style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>My GIS Web Map</h1>
+    <p>Use the layer control to show or hide zones. Click a polygon to inspect its attributes.</p>
+  </header>
+  <div id="map" aria-label="Interactive GIS map"></div>
+  <div id="status" class="status">Loading map data…</div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+  // EDIT THESE SETTINGS if you want to change the map title or initial view.
+  const MAP_TITLE = "My GIS Web Map";
+  const INITIAL_CENTER = [14.5995, 120.9842]; // Manila; map zooms to your data when it loads.
+  const INITIAL_ZOOM = 6;
+
+  document.title = MAP_TITLE;
+  document.querySelector("header h1").textContent = MAP_TITLE;
+
+  const map = L.map("map").setView(INITIAL_CENTER, INITIAL_ZOOM);
+
+  // OpenStreetMap tiles are provided under the OpenStreetMap tile usage policy.
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  }).addTo(map);
+
+  const status = document.getElementById("status");
+
+  // Escape data before displaying it in the HTML popup.
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, ch => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[ch]));
+  }
+
+  function popupHtml(properties) {
+    const entries = Object.entries(properties || {});
+    if (!entries.length) return "<p>No attributes are available for this feature.</p>";
+    return '<table class="popup-table">' + entries.map(([key, value]) =>
+      "<tr><th>" + escapeHtml(key) + "</th><td>" +
+      escapeHtml(value === null || value === undefined ? "" :
+        (typeof value === "object" ? JSON.stringify(value) : value)) +
+      "</td></tr>"
+    ).join("") + "</table>";
+  }
+
+  // Each GeoJSON file listed here becomes its own toggleable layer.
+  // Add more files by copying a line and changing the label and path.
+  const layerFiles = [
+    { name: "Zones", url: "./data/zones.geojson", color: "#2878b5" }
+    // Example:
+    // ,{ name: "Restricted Areas", url: "./data/restricted_areas.geojson", color: "#c44e52" }
+  ];
+
+  const overlays = {};
+  const boundsLayers = [];
+
+  Promise.all(layerFiles.map(async item => {
+    const response = await fetch(item.url);
+    if (!response.ok) throw new Error("Could not load " + item.url + " (HTTP " + response.status + ")");
+    const geojson = await response.json();
+    const layer = L.geoJSON(geojson, {
+      style: () => ({
+        color: item.color,
+        weight: 2,
+        opacity: 0.95,
+        fillColor: item.color,
+        fillOpacity: 0.25
+      }),
+      onEachFeature: (feature, featureLayer) => {
+        featureLayer.bindPopup(popupHtml(feature.properties), { maxWidth: 420 });
+        featureLayer.on({
+          mouseover: event => event.target.setStyle({ weight: 3, fillOpacity: 0.42 }),
+          mouseout: event => {
+            if (layer.hasLayer(event.target)) layer.resetStyle(event.target);
+          }
+        });
+      }
+    });
+    overlays[item.name] = layer;
+    boundsLayers.push(layer);
+    layer.addTo(map);
+  })).then(() => {
+    L.control.layers(null, overlays, { collapsed: false }).addTo(map);
+    const allBounds = L.featureGroup(boundsLayers).getBounds();
+    if (allBounds.isValid()) map.fitBounds(allBounds, { padding: [20, 20], maxZoom: 16 });
+    status.textContent = "Map loaded. Use the layer control to toggle zones; click a polygon for its attributes.";
+  }).catch(error => {
+    console.error(error);
+    status.classList.add("error");
+    status.textContent = "Map data could not be loaded. Check that data/zones.geojson exists, is valid GeoJSON, and is committed to GitHub. Details: " + error.message;
+  });
+</script>
+</body>
+</html>
